@@ -1,9 +1,16 @@
 <launch>
-   <arg name="obstacle" default="0.3"/>
-   <arg name="degrees" default="-90"/>
+    <arg name="obstacle" default="0.3"/>
+    <arg name="degrees" default="-90"/>
+    <!-- <arg name="rviz_config" default=""/> -->
+    <arg name="custom_namespace" default=""/>
 
-   <node pkg="attach_shelf" exec="pre_approach_node" name="pre_approach_node">
-     <param name="obstacle" value="$(var obstacle)"/>
-     <param name="degrees" value="$(var degrees)"/>
-   </node>
+    <group>
+        <!-- <push-ros-namespace namespace="$(var custom_namespace)"/> -->
+        <node pkg="attach_shelf" exec="pre_approach_node" name="pre_approach_node">
+            <param name="obstacle" value="$(var obstacle)"/>
+            <param name="degrees" value="$(var degrees)"/>
+        </node>
+    </group>
+
+  <node pkg="rviz2" exec="rviz2" name="rviz2" output="screen" args="-d $(find-pkg-share attach_shelf)/config/Pre_approach.rviz" />
 </launch>

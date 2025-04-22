@@ -67,7 +67,7 @@ private:
       return;
     }
 
-    float laser_forward = get_min_distance(laser_ranges_, 340, 380);
+    float laser_forward = get_min_distance(laser_ranges_, 500, 580);
 
     if (!rotating_ && laser_forward > _obstacle_dist) {
       // Move forward
