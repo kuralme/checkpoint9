@@ -67,7 +67,7 @@ private:
       return;
     }
 
-    float laser_forward = get_min_distance(laser_ranges_, 340, 380);
+    float laser_forward = get_min_distance(laser_ranges_, 500, 580);
 
     if (!rotating_ && laser_forward > _obstacle_dist) {
       // Move forward
@@ -99,6 +99,9 @@ private:
         move_cmd_.angular.z = 0.0;
         rotating_ = false;
         pub_timer_->cancel();
+        cmd_vel_pub_->publish(move_cmd_);
+
+        rclcpp::shutdown();
       }
     }
     cmd_vel_pub_->publish(move_cmd_);
