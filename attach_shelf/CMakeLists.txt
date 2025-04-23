@@ -28,12 +28,16 @@ endif()
 
 add_executable(pre_approach_node src/pre_approach.cpp)
 ament_target_dependencies(pre_approach_node rclcpp geometry_msgs sensor_msgs nav_msgs tf2)
-# add_executable(pre_approach_client_node src/pre_approach_v2.cpp)
-# ament_target_dependencies(pre_approach_client_node rclcpp std_msgs geometry_msgs sensor_msgs attach_shelf_srv)
+add_executable(approach_client_node src/pre_approach_v2.cpp)
+ament_target_dependencies(approach_client_node rclcpp std_msgs geometry_msgs sensor_msgs nav_msgs tf2 attach_shelf_srv)
+add_executable(approach_shelf_server_node src/approach_service_server.cpp)
+ament_target_dependencies(approach_shelf_server_node rclcpp std_msgs geometry_msgs sensor_msgs nav_msgs tf2 attach_shelf_srv)
+
 
 install(TARGETS
   pre_approach_node
-#   pre_approach_client_node
+  approach_client_node
+  approach_shelf_server_node
   DESTINATION lib/${PROJECT_NAME}
 )
 install(DIRECTORY
