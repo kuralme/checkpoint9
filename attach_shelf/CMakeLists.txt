@@ -12,6 +12,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
 find_package(attach_shelf_srv REQUIRED)
 
 if(BUILD_TESTING)
@@ -31,7 +32,7 @@ ament_target_dependencies(pre_approach_node rclcpp geometry_msgs sensor_msgs nav
 add_executable(approach_client_node src/pre_approach_v2.cpp)
 ament_target_dependencies(approach_client_node rclcpp std_msgs geometry_msgs sensor_msgs nav_msgs tf2 attach_shelf_srv)
 add_executable(approach_shelf_server_node src/approach_service_server.cpp)
-ament_target_dependencies(approach_shelf_server_node rclcpp std_msgs geometry_msgs sensor_msgs nav_msgs tf2 attach_shelf_srv)
+ament_target_dependencies(approach_shelf_server_node rclcpp std_msgs geometry_msgs sensor_msgs nav_msgs tf2_ros attach_shelf_srv)
 
 
 install(TARGETS

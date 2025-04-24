@@ -74,7 +74,7 @@ private:
       return;
     }
 
-    float laser_forward = get_min_distance(laser_ranges_, 340, 380);
+    float laser_forward = get_min_distance(laser_ranges_, 500, 580);
 
     if (!rotating_ && laser_forward > _obstacle_dist) {
       // Move forward
@@ -106,18 +106,17 @@ private:
         rotating_ = false;
         pub_timer_->cancel();
 
-        final_approach_execute();
-        RCLCPP_INFO(this->get_logger(), "Motion Completed.");
+        call_approach_service();
       }
     }
     cmd_vel_pub_->publish(move_cmd_);
   }
 
-  void final_approach_execute() {
+  void call_approach_service() {
     while (!approach_client_->wait_for_service(std::chrono::seconds(1))) {
-      RCLCPP_WARN(this->get_logger(), "Waiting for approach shelf service...");
+      RCLCPP_WARN(this->get_logger(),
+                  "Waiting for approach to shelf service...");
     }
-
     auto request =
         std::make_shared<attach_shelf_srv::srv::GoToLoading::Request>();
     request->attach_to_shelf = _final_approach;
@@ -130,8 +129,8 @@ private:
       rclcpp::Client<attach_shelf_srv::srv::GoToLoading>::SharedFuture future) {
     auto response = future.get();
 
-    RCLCPP_INFO(this->get_logger(), "Service Response - Final approach: %s",
-                response->complete ? "success" : "failed");
+    RCLCPP_INFO(this->get_logger(), "Service Response - service %s.",
+                response->complete ? "successful" : "failed");
   }
 
   float get_min_distance(const std::vector<float> &ranges, size_t start_idx,
