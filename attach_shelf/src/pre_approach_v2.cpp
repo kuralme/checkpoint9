@@ -114,8 +114,7 @@ private:
 
   void call_approach_service() {
     while (!approach_client_->wait_for_service(std::chrono::seconds(1))) {
-      RCLCPP_WARN(this->get_logger(),
-                  "Waiting for approach to shelf service...");
+      RCLCPP_WARN(this->get_logger(), "Waiting for approach_shelf service...");
     }
     auto request =
         std::make_shared<attach_shelf_srv::srv::GoToLoading::Request>();
