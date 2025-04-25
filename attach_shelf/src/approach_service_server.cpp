@@ -20,8 +20,8 @@
 class ApproachShelfServer : public rclcpp::Node {
 public:
   ApproachShelfServer()
-      : Node("approach_shelf_server"), midpoint_(0.0, 0.0),
-        is_moving_to_cart_(false), is_moving_to_goal_(false) {
+      : Node("approach_shelf_server"), is_moving_to_cart_(false),
+        is_moving_to_goal_(false) {
 
     approach_server_ = this->create_service<attach_shelf_srv::srv::GoToLoading>(
         "/approach_shelf",
@@ -68,7 +68,7 @@ private:
   void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     robot_odom_ = *msg;
   }
-  void listen_tf() {
+  void listen_tf(void) {
     if (!is_moving_to_cart_)
       return;
 
@@ -82,7 +82,7 @@ private:
       goal_pose2d_.y = transform.transform.translation.y;
 
     } catch (const tf2::TransformException &ex) {
-      RCLCPP_WARN(this->get_logger(), "Could not transform cart_frame: %s",
+      RCLCPP_WARN(this->get_logger(), "Could not find transform: %s",
                   ex.what());
     }
   }
@@ -123,17 +123,9 @@ private:
     float y1 = laser_ranges_[idx1] * std::sin(angle1);
     float x2 = laser_ranges_[idx2] * std::cos(angle2);
     float y2 = laser_ranges_[idx2] * std::sin(angle2);
-    midpoint_ = {(x1 + x2) / 2.0f, (y1 + y2) / 2.0f};
+    std::pair<float, float> midpoint = {(x1 + x2) / 2.0f, (y1 + y2) / 2.0f};
 
-    RCLCPP_INFO(this->get_logger(), "idx1,2 (%d, %d)", idx1, idx2);
-    RCLCPP_INFO(this->get_logger(), "range1: %d", laser_ranges_[idx1]);
-    RCLCPP_INFO(this->get_logger(), "range2: %d", laser_ranges_[idx2]);
-    RCLCPP_INFO(this->get_logger(), "cluster1 (%.2f, %.2f)", x1, y1);
-    RCLCPP_INFO(this->get_logger(), "cluster2 (%.2f, %.2f)", x2, y2);
-    RCLCPP_INFO(this->get_logger(), "cart_frame from laser (%.2f, %.2f)",
-                midpoint_.first, midpoint_.second);
-
-    broadcast_cart_frame(x1, x2, y1, y2);
+    broadcast_cart_frame(midpoint);
 
     if (request->attach_to_shelf) {
       pending_response_ = response;
@@ -177,79 +169,51 @@ private:
     return centers;
   }
 
-  void broadcast_cart_frame(float x1, float x2, float y1, float y2) {
+  void broadcast_cart_frame(std::pair<float, float> cart_frame) {
 
-    tf2::Transform tf_robot_to_odom;
-    tf_robot_to_odom.setOrigin(tf2::Vector3(robot_odom_.pose.pose.position.x,
-                                            robot_odom_.pose.pose.position.y,
-                                            0.0));
-    tf2::Quaternion robot_q(robot_odom_.pose.pose.orientation.x,
-                            robot_odom_.pose.pose.orientation.y,
-                            robot_odom_.pose.pose.orientation.z,
-                            robot_odom_.pose.pose.orientation.w);
-    tf_robot_to_odom.setRotation(robot_q);
+    tf2::Transform tf_laser_to_odom;
+    try {
+      // Lookup the transform from robot laser to odom frame
+      geometry_msgs::msg::TransformStamped tf_laser2odom_ =
+          tf_buffer_->lookupTransform("odom", "robot_front_laser_base_link",
+                                      tf2::TimePointZero);
 
-    // NEED TO ADD MIDPOINTS FROM robot_front_laser_base_link NOT robot_odom
+      tf2::Quaternion laser_q(tf_laser2odom_.transform.rotation.x,
+                              tf_laser2odom_.transform.rotation.y,
+                              tf_laser2odom_.transform.rotation.z,
+                              tf_laser2odom_.transform.rotation.w);
+      tf_laser_to_odom.setOrigin(
+          tf2::Vector3(tf_laser2odom_.transform.translation.x,
+                       tf_laser2odom_.transform.translation.y,
+                       tf_laser2odom_.transform.translation.z));
+      tf_laser_to_odom.setRotation(laser_q);
 
-    tf2::Vector3 cart_in_robot(midpoint_.first, midpoint_.second, 0.0);
-    tf2::Vector3 cart_in_odom = tf_robot_to_odom * cart_in_robot;
+      // Cart frame in odom frame
+      tf2::Vector3 cart_in_laser(cart_frame.first, cart_frame.second, 0.0);
+      tf2::Vector3 cart_in_odom = tf_laser_to_odom * cart_in_laser;
 
-    geometry_msgs::msg::TransformStamped t;
-    t.header.stamp = this->now();
-    t.header.frame_id = "odom";
-    t.child_frame_id = "cart_frame";
-    t.transform.translation.x = cart_in_odom.x();
-    t.transform.translation.y = cart_in_odom.y();
-    t.transform.translation.z = 0.0;
-    t.transform.rotation.x = robot_odom_.pose.pose.orientation.x;
-    t.transform.rotation.y = robot_odom_.pose.pose.orientation.y;
-    t.transform.rotation.z = robot_odom_.pose.pose.orientation.z;
-    t.transform.rotation.w = robot_odom_.pose.pose.orientation.w;
+      geometry_msgs::msg::TransformStamped t;
+      t.header.stamp = this->now();
+      t.header.frame_id = "odom";
+      t.child_frame_id = "cart_frame";
+      t.transform.translation.x = cart_in_odom.x();
+      t.transform.translation.y = cart_in_odom.y();
+      t.transform.translation.z = 0.0;
+      t.transform.rotation.x = tf_laser2odom_.transform.rotation.x;
+      t.transform.rotation.y = tf_laser2odom_.transform.rotation.y;
+      t.transform.rotation.z = tf_laser2odom_.transform.rotation.z;
+      t.transform.rotation.w = tf_laser2odom_.transform.rotation.w;
 
-    tf_broadcaster_->sendTransform(t);
-    RCLCPP_INFO(this->get_logger(),
-                "Published static cart_frame at (%.2f, %.2f)",
-                t.transform.translation.x, t.transform.translation.y);
+      tf_broadcaster_->sendTransform(t);
+      RCLCPP_INFO(this->get_logger(),
+                  "Published static cart_frame at (%.2f, %.2f)",
+                  t.transform.translation.x, t.transform.translation.y);
 
-    // ------------------- Debug frames -------------------
-    geometry_msgs::msg::TransformStamped t1;
-    t1.header.stamp = this->now();
-    t1.header.frame_id = "robot_front_laser_base_link";
-    t1.child_frame_id = "cluster1_frame";
-    t1.transform.translation.x = x1;
-    t1.transform.translation.y = y1;
-    t1.transform.translation.z = 0.0;
-    tf2::Quaternion q1;
-    q1.setRPY(0, 0, 0);
-    t1.transform.rotation.x = q1.x();
-    t1.transform.rotation.y = q1.y();
-    t1.transform.rotation.z = q1.z();
-    t1.transform.rotation.w = q1.w();
-    tf_broadcaster_->sendTransform(t1);
-    geometry_msgs::msg::TransformStamped t2;
-    t2.header.stamp = this->now();
-    t2.header.frame_id = "robot_front_laser_base_link";
-    t2.child_frame_id = "cluster2_frame";
-    t2.transform.translation.x = x2;
-    t2.transform.translation.y = y2;
-    t2.transform.translation.z = 0.0;
-    t2.transform.rotation.x = q1.x();
-    t2.transform.rotation.y = q1.y();
-    t2.transform.rotation.z = q1.z();
-    t2.transform.rotation.w = q1.w();
-    tf_broadcaster_->sendTransform(t2);
-    geometry_msgs::msg::TransformStamped t3;
-    t3.header.stamp = this->now();
-    t3.header.frame_id = "robot_front_laser_base_link";
-    t3.child_frame_id = "cart_frame_from_laser";
-    t3.transform.translation.x = midpoint_.first;
-    t3.transform.translation.y = midpoint_.second;
-    t3.transform.translation.z = 0.0;
-    t3.transform.rotation.x = robot_odom_.pose.pose.orientation.x;
-    t3.transform.rotation.y = robot_odom_.pose.pose.orientation.y;
-    t3.transform.rotation.z = robot_odom_.pose.pose.orientation.z;
-    t3.transform.rotation.w = robot_odom_.pose.pose.orientation.w;
-    tf_broadcaster_->sendTransform(t3);
+    } catch (const tf2::TransformException &ex) {
+      RCLCPP_WARN(this->get_logger(),
+                  "Could not transform robot_front_laser_base_link to odom: %s",
+                  ex.what());
+    }
   }
 
   void move_to_cart() {
@@ -285,7 +249,7 @@ private:
         cmd.angular.z = 1.5 * delta_theta;
         cmd_vel_pub_->publish(cmd);
 
-        RCLCPP_INFO(this->get_logger(), "cart distance: %.2f ", cart_dist);
+        RCLCPP_INFO(this->get_logger(), "Cart distance: %.2fm ", cart_dist);
 
       } else {
         geometry_msgs::msg::Twist cmd;
@@ -309,13 +273,13 @@ private:
                     goal_pose2d_.x, goal_pose2d_.y);
       }
     } else if (is_moving_to_goal_) {
-      // Move to the new goal point 30 cm ahead
+      // Move to the new goal
       double delta_x_final = goal_pose2d_.x - robot_odom_.pose.pose.position.x;
       double delta_y_final = goal_pose2d_.y - robot_odom_.pose.pose.position.y;
       double distance_final = std::sqrt(delta_x_final * delta_x_final +
                                         delta_y_final * delta_y_final);
 
-      RCLCPP_INFO(this->get_logger(), "final distance: %.2f ", distance_final);
+      RCLCPP_INFO(this->get_logger(), "Final distance: %.2fm ", distance_final);
 
       if (distance_final > 0.05) {
         geometry_msgs::msg::Twist cmd;
@@ -357,7 +321,6 @@ private:
   std::shared_ptr<attach_shelf_srv::srv::GoToLoading::Response>
       pending_response_;
   std::vector<float> laser_ranges_, laser_intensities_;
-  std::pair<float, float> midpoint_;
   float angle_increment_, angle_min_;
   bool is_moving_to_cart_, is_moving_to_goal_;
 };
