@@ -22,19 +22,28 @@ public:
   ApproachShelfServer()
       : Node("approach_shelf_server"), is_moving_to_cart_(false),
         is_moving_to_goal_(false) {
+    rclcpp::CallbackGroup::SharedPtr callback_group_;
+    callback_group_ =
+        this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+
+    rclcpp::SubscriptionOptions sub_options;
+    sub_options.callback_group = callback_group_;
+    scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
+        "/scan", rclcpp::SensorDataQoS(),
+        std::bind(&ApproachShelfServer::scan_callback, this,
+                  std::placeholders::_1),
+        sub_options);
+    odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+        "/odom", rclcpp::SensorDataQoS(),
+        std::bind(&ApproachShelfServer::odom_callback, this,
+                  std::placeholders::_1),
+        sub_options);
 
     approach_server_ = this->create_service<attach_shelf_srv::srv::GoToLoading>(
         "/approach_shelf",
         std::bind(&ApproachShelfServer::approach_shelf_callback, this,
-                  std::placeholders::_1, std::placeholders::_2));
-    scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
-        "/scan", rclcpp::SensorDataQoS(),
-        std::bind(&ApproachShelfServer::scan_callback, this,
-                  std::placeholders::_1));
-    odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-        "/odom", rclcpp::SensorDataQoS(),
-        std::bind(&ApproachShelfServer::odom_callback, this,
-                  std::placeholders::_1));
+                  std::placeholders::_1, std::placeholders::_2),
+        rmw_qos_profile_services_default, callback_group_);
 
     tf_broadcaster_ =
         std::make_unique<tf2_ros::StaticTransformBroadcaster>(this);
@@ -42,15 +51,11 @@ public:
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
     tf_timer_ = this->create_wall_timer(
         std::chrono::milliseconds(200),
-        std::bind(&ApproachShelfServer::listen_tf, this));
-    pub_vel_timer_ = this->create_wall_timer(
-        std::chrono::milliseconds(100),
-        std::bind(&ApproachShelfServer::move_to_cart, this));
+        std::bind(&ApproachShelfServer::listen_cart_tf, this));
+
     cmd_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(
         "/diffbot_base_controller/cmd_vel_unstamped", 10);
 
-    move_cmd_.linear.x = 0.0;
-    move_cmd_.angular.z = 0.0;
     RCLCPP_INFO(this->get_logger(), "Approach shelf service ready.");
   }
 
@@ -68,7 +73,7 @@ private:
   void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     robot_odom_ = *msg;
   }
-  void listen_tf(void) {
+  void listen_cart_tf(void) {
     if (!is_moving_to_cart_)
       return;
 
@@ -127,14 +132,18 @@ private:
 
     broadcast_cart_frame(midpoint);
 
-    if (request->attach_to_shelf) {
-      pending_response_ = response;
-      is_moving_to_cart_ = true;
-
-    } else {
-      RCLCPP_INFO(this->get_logger(), "No approach has done.");
+    if (!request->attach_to_shelf) {
+      RCLCPP_INFO(this->get_logger(), "No approach requested.");
       response->complete = true;
+      return;
     }
+
+    RCLCPP_INFO(this->get_logger(), "Starting to move toward cart...");
+    is_moving_to_cart_ = true;
+    move_to_cart();
+
+    response->complete = true;
+    RCLCPP_INFO(this->get_logger(), "Final approach completed.");
   }
 
   std::vector<int>
@@ -216,92 +225,91 @@ private:
     }
   }
 
-  void move_to_cart() {
-    if (!is_moving_to_cart_ && !is_moving_to_goal_) {
-      return;
-    }
+  void move_to_cart(void) {
+    rclcpp::Rate rate(10);
 
-    if (is_moving_to_cart_) {
-      // Move robot to cart loading position
-      double delta_x = goal_pose2d_.x - robot_odom_.pose.pose.position.x;
-      double delta_y = goal_pose2d_.y - robot_odom_.pose.pose.position.y;
-      double cart_dist = std::sqrt(delta_x * delta_x + delta_y * delta_y);
+    while (rclcpp::ok()) {
 
-      if (cart_dist > 0.05) {
-        // Moving to cart_frame
-        tf2::Quaternion quat(robot_odom_.pose.pose.orientation.x,
-                             robot_odom_.pose.pose.orientation.y,
-                             robot_odom_.pose.pose.orientation.z,
-                             robot_odom_.pose.pose.orientation.w);
-        double roll, pitch, yaw;
-        tf2::Matrix3x3(quat).getRPY(roll, pitch, yaw);
-        double angle_to_cart = std::atan2(delta_y, delta_x);
-        double delta_theta = angle_to_cart - yaw;
+      if (is_moving_to_cart_) {
+        // Move robot to cart loading position
+        double delta_x = goal_pose2d_.x - robot_odom_.pose.pose.position.x;
+        double delta_y = goal_pose2d_.y - robot_odom_.pose.pose.position.y;
+        double cart_dist = std::sqrt(delta_x * delta_x + delta_y * delta_y);
 
-        if (delta_theta > M_PI) {
-          delta_theta -= 2 * M_PI;
-        } else if (delta_theta < -M_PI) {
-          delta_theta += 2 * M_PI;
-        }
+        if (cart_dist > 0.05) {
+          // Moving to cart_frame
+          tf2::Quaternion quat(robot_odom_.pose.pose.orientation.x,
+                               robot_odom_.pose.pose.orientation.y,
+                               robot_odom_.pose.pose.orientation.z,
+                               robot_odom_.pose.pose.orientation.w);
+          double roll, pitch, yaw;
+          tf2::Matrix3x3(quat).getRPY(roll, pitch, yaw);
+          double angle_to_cart = std::atan2(delta_y, delta_x);
+          double delta_theta = angle_to_cart - yaw;
 
-        geometry_msgs::msg::Twist cmd;
-        cmd.linear.x = 0.1;
-        cmd.angular.z = 1.5 * delta_theta;
-        cmd_vel_pub_->publish(cmd);
+          if (delta_theta > M_PI) {
+            delta_theta -= 2 * M_PI;
+          } else if (delta_theta < -M_PI) {
+            delta_theta += 2 * M_PI;
+          }
 
-        RCLCPP_INFO(this->get_logger(), "Cart distance: %.2fm ", cart_dist);
+          geometry_msgs::msg::Twist cmd;
+          cmd.linear.x = 0.1;
+          cmd.angular.z = 1.5 * delta_theta;
+          cmd_vel_pub_->publish(cmd);
 
-      } else {
-        geometry_msgs::msg::Twist cmd;
-        cmd.linear.x = 0.0;
-        cmd.angular.z = 0.0;
-        cmd_vel_pub_->publish(cmd);
+          RCLCPP_INFO(this->get_logger(), "Cart distance: %.2fm ", cart_dist);
 
-        // Set new goal: Loading point 30 cm ahead
-        tf2::Quaternion quat(robot_odom_.pose.pose.orientation.x,
-                             robot_odom_.pose.pose.orientation.y,
-                             robot_odom_.pose.pose.orientation.z,
-                             robot_odom_.pose.pose.orientation.w);
-        double roll, pitch, yaw;
-        tf2::Matrix3x3(quat).getRPY(roll, pitch, yaw);
-        goal_pose2d_.x += 0.3 * std::cos(yaw);
-        goal_pose2d_.y += 0.3 * std::sin(yaw);
+        } else {
+          geometry_msgs::msg::Twist cmd;
+          cmd.linear.x = 0.0;
+          cmd.angular.z = 0.0;
+          cmd_vel_pub_->publish(cmd);
 
-        is_moving_to_cart_ = false;
-        is_moving_to_goal_ = true;
-        RCLCPP_INFO(this->get_logger(), "New goal set 30cm ahead: (%.2f, %.2f)",
-                    goal_pose2d_.x, goal_pose2d_.y);
-      }
-    } else if (is_moving_to_goal_) {
-      // Move to the new goal
-      double delta_x_final = goal_pose2d_.x - robot_odom_.pose.pose.position.x;
-      double delta_y_final = goal_pose2d_.y - robot_odom_.pose.pose.position.y;
-      double distance_final = std::sqrt(delta_x_final * delta_x_final +
-                                        delta_y_final * delta_y_final);
+          // Set new goal: Loading point 30 cm ahead
+          tf2::Quaternion quat(robot_odom_.pose.pose.orientation.x,
+                               robot_odom_.pose.pose.orientation.y,
+                               robot_odom_.pose.pose.orientation.z,
+                               robot_odom_.pose.pose.orientation.w);
+          double roll, pitch, yaw;
+          tf2::Matrix3x3(quat).getRPY(roll, pitch, yaw);
+          goal_pose2d_.x += 0.3 * std::cos(yaw);
+          goal_pose2d_.y += 0.3 * std::sin(yaw);
 
-      RCLCPP_INFO(this->get_logger(), "Final distance: %.2fm ", distance_final);
-
-      if (distance_final > 0.05) {
-        geometry_msgs::msg::Twist cmd;
-        cmd.linear.x = 0.1;
-        cmd_vel_pub_->publish(cmd);
-      } else {
-        // Stop the robot at the final goal
-        geometry_msgs::msg::Twist stop_cmd;
-        stop_cmd.linear.x = 0.0;
-        stop_cmd.angular.z = 0.0;
-        cmd_vel_pub_->publish(stop_cmd);
-
-        is_moving_to_goal_ = false;
-
-        // Send the response
-        if (pending_response_) {
-          pending_response_->complete = true;
+          is_moving_to_cart_ = false;
+          is_moving_to_goal_ = true;
           RCLCPP_INFO(this->get_logger(),
-                      "Final approach complete. Sending response.");
-          pending_response_.reset();
+                      "New goal set 30cm ahead: (%.2f, %.2f)", goal_pose2d_.x,
+                      goal_pose2d_.y);
+        }
+
+      } else if (is_moving_to_goal_) {
+        // Move to the new goal
+        double delta_x_final =
+            goal_pose2d_.x - robot_odom_.pose.pose.position.x;
+        double delta_y_final =
+            goal_pose2d_.y - robot_odom_.pose.pose.position.y;
+        double distance_final = std::sqrt(delta_x_final * delta_x_final +
+                                          delta_y_final * delta_y_final);
+
+        RCLCPP_INFO(this->get_logger(), "Final distance: %.2fm ",
+                    distance_final);
+
+        if (distance_final > 0.05) {
+          geometry_msgs::msg::Twist cmd;
+          cmd.linear.x = 0.1;
+          cmd_vel_pub_->publish(cmd);
+        } else {
+          // Stop the robot at the final goal
+          geometry_msgs::msg::Twist stop_cmd;
+          stop_cmd.linear.x = 0.0;
+          stop_cmd.angular.z = 0.0;
+          cmd_vel_pub_->publish(stop_cmd);
+          return;
         }
       }
+
+      rate.sleep();
     }
   }
 
@@ -311,15 +319,11 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::TimerBase::SharedPtr tf_timer_;
-  rclcpp::TimerBase::SharedPtr pub_vel_timer_;
-  nav_msgs::msg::Odometry robot_odom_;
-  geometry_msgs::msg::Twist move_cmd_;
   geometry_msgs::msg::Pose2D goal_pose2d_;
+  nav_msgs::msg::Odometry robot_odom_;
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
   std::unique_ptr<tf2_ros::StaticTransformBroadcaster> tf_broadcaster_;
-  std::shared_ptr<attach_shelf_srv::srv::GoToLoading::Response>
-      pending_response_;
   std::vector<float> laser_ranges_, laser_intensities_;
   float angle_increment_, angle_min_;
   bool is_moving_to_cart_, is_moving_to_goal_;
@@ -332,6 +336,6 @@ int main(int argc, char **argv) {
   rclcpp::executors::MultiThreadedExecutor executor;
   executor.add_node(node);
   executor.spin();
-
+  rclcpp::shutdown();
   return 0;
 }
