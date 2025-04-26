@@ -5,6 +5,8 @@
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
+#include "std_msgs/msg/detail/string__struct.hpp"
+#include "std_msgs/msg/string.hpp"
 #include "tf2/LinearMath/Matrix3x3.h"
 #include "tf2/LinearMath/Quaternion.h"
 #include "tf2_ros/buffer.h"
@@ -21,7 +23,7 @@ class ApproachShelfServer : public rclcpp::Node {
 public:
   ApproachShelfServer()
       : Node("approach_shelf_server"), is_moving_to_cart_(false),
-        is_moving_to_goal_(false) {
+        is_moving_to_goal_(false), is_service_finished_(false) {
     rclcpp::CallbackGroup::SharedPtr callback_group_;
     callback_group_ =
         this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
@@ -53,8 +55,14 @@ public:
         std::chrono::milliseconds(200),
         std::bind(&ApproachShelfServer::listen_cart_tf, this));
 
+    shutdown_timer_ = this->create_wall_timer(
+        std::chrono::seconds(1),
+        std::bind(&ApproachShelfServer::shutdown_cb, this));
+
     cmd_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(
         "/diffbot_base_controller/cmd_vel_unstamped", 10);
+    attach_pub_ =
+        this->create_publisher<std_msgs::msg::String>("/elevator_up", 1);
 
     RCLCPP_INFO(this->get_logger(), "Approach shelf service ready.");
   }
@@ -91,7 +99,10 @@ private:
                   ex.what());
     }
   }
-
+  void shutdown_cb(void) {
+    if (is_service_finished_)
+      rclcpp::shutdown();
+  }
   void approach_shelf_callback(
       const std::shared_ptr<attach_shelf_srv::srv::GoToLoading::Request>
           request,
@@ -116,6 +127,7 @@ private:
     if (cluster_centers.size() < 2) {
       RCLCPP_WARN(this->get_logger(), "Less than 2 reflectors found.");
       response->complete = false;
+      is_service_finished_ = true;
       return;
     }
 
@@ -144,6 +156,7 @@ private:
 
     response->complete = true;
     RCLCPP_INFO(this->get_logger(), "Final approach completed.");
+    is_service_finished_ = true;
   }
 
   std::vector<int>
@@ -305,6 +318,11 @@ private:
           stop_cmd.linear.x = 0.0;
           stop_cmd.angular.z = 0.0;
           cmd_vel_pub_->publish(stop_cmd);
+
+          // Publish msg to attach cart to robot
+          std_msgs::msg::String msg;
+          msg.data = "";
+          attach_pub_->publish(msg);
           return;
         }
       }
@@ -316,9 +334,11 @@ private:
   rclcpp::Service<attach_shelf_srv::srv::GoToLoading>::SharedPtr
       approach_server_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr attach_pub_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::TimerBase::SharedPtr tf_timer_;
+  rclcpp::TimerBase::SharedPtr shutdown_timer_;
   geometry_msgs::msg::Pose2D goal_pose2d_;
   nav_msgs::msg::Odometry robot_odom_;
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
@@ -326,7 +346,7 @@ private:
   std::unique_ptr<tf2_ros::StaticTransformBroadcaster> tf_broadcaster_;
   std::vector<float> laser_ranges_, laser_intensities_;
   float angle_increment_, angle_min_;
-  bool is_moving_to_cart_, is_moving_to_goal_;
+  bool is_moving_to_cart_, is_moving_to_goal_, is_service_finished_;
 };
 
 int main(int argc, char **argv) {

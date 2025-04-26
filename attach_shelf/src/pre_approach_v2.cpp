@@ -138,6 +138,7 @@ private:
 
     RCLCPP_INFO(this->get_logger(), "Service Response - service %s.",
                 response->complete ? "successful" : "failed");
+    rclcpp::shutdown();
   }
 
   float get_min_distance(const std::vector<float> &ranges, size_t start_idx,
