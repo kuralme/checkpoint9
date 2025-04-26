@@ -34,15 +34,38 @@ endif()
 
 include_directories(include)
 
+# Pre approach composition node
 add_library(pre_approach_component SHARED src/pre_approach_component.cpp)
 target_compile_definitions(pre_approach_component PRIVATE "COMPOSITION_BUILDING_DLL")
 ament_target_dependencies(pre_approach_component rclcpp rclcpp_components geometry_msgs sensor_msgs nav_msgs tf2)
 rclcpp_components_register_nodes(pre_approach_component "my_components::PreApproach")
 set(node_plugins "${node_plugins}my_components::PreApproach;$<TARGET_FILE:pre_approach_component>\n")
 
+# Server composition nodes: Client (Runtime), Server (manual)
+add_library(approach_client_component SHARED src/approach_client_component.cpp)
+target_compile_definitions(approach_client_component PRIVATE "COMPOSITION_BUILDING_DLL")
+ament_target_dependencies(approach_client_component rclcpp rclcpp_components geometry_msgs sensor_msgs nav_msgs tf2 tf2_ros attach_shelf_srv)
+rclcpp_components_register_nodes(approach_client_component "my_components::AttachClient")
+set(node_plugins "${node_plugins}my_components::AttachClient;$<TARGET_FILE:approach_client_component>\n")
+add_library(approach_server_component SHARED src/approach_server_component.cpp)
+target_compile_definitions(approach_server_component PRIVATE "COMPOSITION_BUILDING_DLL")
+ament_target_dependencies(approach_server_component rclcpp rclcpp_components geometry_msgs sensor_msgs nav_msgs tf2 tf2_ros attach_shelf_srv)
+rclcpp_components_register_nodes(approach_server_component "my_components::AttachServer")
+set(node_plugins "${node_plugins}my_components::AttachServer;$<TARGET_FILE:approach_server_component>\n")
+
+# Manual composition
+add_executable(server_manual_composition src/server_manual_composition.cpp)
+target_link_libraries(server_manual_composition approach_server_component)
+ament_target_dependencies(server_manual_composition rclcpp)
+install(TARGETS
+  server_manual_composition
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 install(TARGETS
   pre_approach_component
+  approach_client_component
+  approach_server_component
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
