@@ -7,6 +7,8 @@
 #include "tf2/LinearMath/Quaternion.h"
 #include <cmath>
 
+using namespace std::chrono_literals;
+
 class PreApproach : public rclcpp::Node {
 public:
   PreApproach(const rclcpp::NodeOptions &options)
@@ -123,6 +125,12 @@ private:
     auto result_future = approach_client_->async_send_request(
         request, std::bind(&PreApproach::response_callback, this,
                            std::placeholders::_1));
+
+    // Now check for the response after a timeout
+    auto status = result_future.wait_for(20s);
+    if (status != std::future_status::ready) {
+      RCLCPP_WARN(this->get_logger(), "Response not ready yet.");
+    }
   }
   void response_callback(
       rclcpp::Client<attach_shelf_srv::srv::GoToLoading>::SharedFuture future) {
