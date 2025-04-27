@@ -59,9 +59,11 @@ void AttachServer::scan_callback(
   laser_intensities_ = msg->intensities;
   angle_increment_ = msg->angle_increment;
   angle_min_ = msg->angle_min;
+  RCLCPP_WARN(this->get_logger(), "----scan called----");
 }
 void AttachServer::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
   robot_odom_ = *msg;
+  RCLCPP_WARN(this->get_logger(), "----odom called----");
 }
 void AttachServer::listen_cart_tf(void) {
   if (!is_moving_to_cart_)
@@ -295,7 +297,7 @@ void AttachServer::move_to_cart(void) {
       }
     }
 
-    rate.sleep();
+    // rate.sleep();
   }
 }
 

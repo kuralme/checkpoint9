@@ -88,7 +88,7 @@ void PreApproach::preapproach_execute(void) {
       pub_timer_->cancel();
 
       // Terminate program
-      rclcpp::shutdown();
+      //   rclcpp::shutdown();
     }
   }
   cmd_vel_pub_->publish(move_cmd_);
