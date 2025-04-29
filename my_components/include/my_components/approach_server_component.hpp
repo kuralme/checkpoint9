@@ -29,6 +29,9 @@ protected:
   void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
   void listen_cart_tf(void);
   void shutdown_cb(void);
+
+  void check_and_respond_to_service();
+
   void approach_shelf_callback(
       const std::shared_ptr<attach_shelf_srv::srv::GoToLoading::Request>
           request,
@@ -45,10 +48,12 @@ private:
       approach_server_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr attach_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::TimerBase::SharedPtr tf_timer_;
   rclcpp::TimerBase::SharedPtr shutdown_timer_;
+  rclcpp::TimerBase::SharedPtr move_timer_;
   geometry_msgs::msg::Pose2D goal_pose2d_;
   nav_msgs::msg::Odometry robot_odom_;
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
