@@ -100,8 +100,8 @@ private:
     }
   }
   void shutdown_cb(void) {
-    if (is_service_finished_)
-      rclcpp::shutdown();
+    // if (is_service_finished_)
+    //   rclcpp::shutdown();
   }
   void approach_shelf_callback(
       const std::shared_ptr<attach_shelf_srv::srv::GoToLoading::Request>
@@ -243,20 +243,22 @@ private:
 
     while (rclcpp::ok()) {
 
+      // Robot orientation
+      tf2::Quaternion quat(robot_odom_.pose.pose.orientation.x,
+                           robot_odom_.pose.pose.orientation.y,
+                           robot_odom_.pose.pose.orientation.z,
+                           robot_odom_.pose.pose.orientation.w);
+      double roll, pitch, yaw;
+      tf2::Matrix3x3(quat).getRPY(roll, pitch, yaw);
+
       if (is_moving_to_cart_) {
         // Move robot to cart loading position
         double delta_x = goal_pose2d_.x - robot_odom_.pose.pose.position.x;
         double delta_y = goal_pose2d_.y - robot_odom_.pose.pose.position.y;
         double cart_dist = std::sqrt(delta_x * delta_x + delta_y * delta_y);
 
-        if (cart_dist > 0.05) {
+        if (cart_dist > 0.02) {
           // Moving to cart_frame
-          tf2::Quaternion quat(robot_odom_.pose.pose.orientation.x,
-                               robot_odom_.pose.pose.orientation.y,
-                               robot_odom_.pose.pose.orientation.z,
-                               robot_odom_.pose.pose.orientation.w);
-          double roll, pitch, yaw;
-          tf2::Matrix3x3(quat).getRPY(roll, pitch, yaw);
           double angle_to_cart = std::atan2(delta_y, delta_x);
           double delta_theta = angle_to_cart - yaw;
 
@@ -279,21 +281,14 @@ private:
           cmd.angular.z = 0.0;
           cmd_vel_pub_->publish(cmd);
 
-          // Set new goal: Loading point 30 cm ahead
-          tf2::Quaternion quat(robot_odom_.pose.pose.orientation.x,
-                               robot_odom_.pose.pose.orientation.y,
-                               robot_odom_.pose.pose.orientation.z,
-                               robot_odom_.pose.pose.orientation.w);
-          double roll, pitch, yaw;
-          tf2::Matrix3x3(quat).getRPY(roll, pitch, yaw);
-          goal_pose2d_.x += 0.3 * std::cos(yaw);
-          goal_pose2d_.y += 0.3 * std::sin(yaw);
+          // Set new goal: Loading point 50 cm ahead
+          goal_pose2d_.x += 0.5 * std::cos(yaw);
+          goal_pose2d_.y += 0.5 * std::sin(yaw);
 
           is_moving_to_cart_ = false;
           is_moving_to_goal_ = true;
-          RCLCPP_INFO(this->get_logger(),
-                      "New goal set 30cm ahead: (%.2f, %.2f)", goal_pose2d_.x,
-                      goal_pose2d_.y);
+          RCLCPP_INFO(this->get_logger(), "Final goal set: (%.2f, %.2f)",
+                      goal_pose2d_.x, goal_pose2d_.y);
         }
 
       } else if (is_moving_to_goal_) {
@@ -308,9 +303,20 @@ private:
         RCLCPP_INFO(this->get_logger(), "Final distance: %.2fm ",
                     distance_final);
 
-        if (distance_final > 0.05) {
+        if (distance_final > 0.02) {
+
+          double angle_to_goal = std::atan2(delta_y_final, delta_x_final);
+          double delta_theta = angle_to_goal - yaw;
+
+          if (delta_theta > M_PI) {
+            delta_theta -= 2 * M_PI;
+          } else if (delta_theta < -M_PI) {
+            delta_theta += 2 * M_PI;
+          }
+
           geometry_msgs::msg::Twist cmd;
           cmd.linear.x = 0.1;
+          cmd.angular.z = 1.0 * delta_theta;
           cmd_vel_pub_->publish(cmd);
         } else {
           // Stop the robot at the final goal
